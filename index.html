@@ -339,9 +339,6 @@ body{min-height:100dvh;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",R
 </div>
 
 
-<!-- ═ SETTINGS TAB ═ -->
-<div class="guide" id="tabNotif" style="display:none">
-  <div style="font-size:1.1rem;font-weight:900;letter-spacing:-.02em;margin-bottom:.3rem">🔔 Уведомления</div>
   <p style="font-size:.83rem;color:var(--text-muted);line-height:1.6;margin-bottom:1.1rem">Три напоминания в день — утром, днём и вечером. Настрой удобное время.</p>
   <div class="gs-card" id="notifSettings" style="background:var(--surface);border:1px solid var(--border);border-radius:1rem;padding:1rem"></div>
 </div>
@@ -350,7 +347,6 @@ body{min-height:100dvh;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",R
   <button class="ni on" onclick="showTab('state',this)"><span class="ni-ic">⚡</span>Состояние</button>
   <button class="ni" onclick="showTab('guide',this)"><span class="ni-ic">📖</span>Гид</button>
   <button class="ni" onclick="showTab('graph',this)"><span class="ni-ic">📈</span>График</button>
-  <button class="ni" id="nN" onclick="showTab('notif');buildNotifUI()"><span class="ni-ic">🔔</span>Напомин.</button>
 </nav>
 
 <script>
@@ -581,8 +577,7 @@ function sel(card){
   document.querySelectorAll(".sc").forEach(c=>c.classList.remove("sel"));
   card.classList.add("sel");chosen=card.dataset.s;
   document.getElementById("mainBtn").classList.add("on");
-  const rp=document.getElementById("rp");
-  if(rp.classList.contains("show")){rp.classList.remove("show");void rp.offsetWidth;rp.classList.add("show");fillResult();}
+  showResult();
 }
 function showResult(){if(!chosen)return;fillResult();const rp=document.getElementById("rp");rp.classList.add("show");setTimeout(()=>rp.scrollIntoView({behavior:"smooth",block:"nearest"}),100);}
 function fillResult(){
@@ -649,7 +644,7 @@ function toggleGuide(state){
 function selectFromGuide(state){
   showTab("state",document.querySelectorAll(".ni")[0]);
   const card=document.querySelector('[data-s="'+state+'"]');
-  if(card){sel(card);setTimeout(()=>showResult(),200);}
+  if(card){sel(card);showResult();}
 }
 </script>
 
@@ -684,7 +679,7 @@ document.getElementById('btnDo').addEventListener('click',function(){
 // Load on start
 (function(){
   if(loadHistory()){
-    console.log('History loaded from localStorage');
+    if(typeof buildGraph==='function')buildGraph(0);
   }
 })();
 
