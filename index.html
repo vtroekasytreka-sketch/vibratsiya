@@ -609,18 +609,34 @@ function fillResult(){
 }
 function getAction(s){const a=ACTIONS_DB[s].actions,i=now.getDay()%a.length;return{text:a[i],num:i+1,total:a.length};}
 function doAction(){
-  // Save to history — find today's slot by date
   const todayStr=now.toDateString();
   let todayIdx=history.findIndex(e=>e&&new Date(e.date).toDateString()===todayStr);
+
   if(todayIdx===-1){
-    // shift array left, put today at [20]
     history.shift();
-    history.push({date:now,state:chosen,level:STATES[chosen].lv});
+    history.push({date:now,checks:[{state:chosen,level:STATES[chosen].lv}],state:chosen,level:STATES[chosen].lv});
+    todayIdx=20;
   } else {
-    history[todayIdx]={date:now,state:chosen,level:STATES[chosen].lv};
+    const entry=history[todayIdx];
+    const checks=entry.checks||[{state:entry.state,level:entry.level}];
+    if(checks.length>=3){
+      document.getElementById("rp").innerHTML='<div class="done"><div class="done-ic">✅</div><div class="done-h">На сегодня всё записано.</div><div class="done-s">Ты уже отметился 3 раза сегодня. Возвращайся завтра.</div></div>';
+      if(currentWeek===0)buildGraph(0);
+      return;
+    }
+    checks.push({state:chosen,level:STATES[chosen].lv});
+    // compute average level and dominant state
+    const avgLv=Math.round(checks.reduce((a,c)=>a+c.level,0)/checks.length);
+    // dominant = most frequent state, or last if tie
+    const freq={};checks.forEach(c=>freq[c.state]=(freq[c.state]||0)+1);
+    const domState=Object.keys(freq).reduce((a,b)=>freq[a]>=freq[b]?a:b);
+    history[todayIdx]={date:entry.date,checks,state:domState,level:avgLv};
   }
+
   saveHistory();
-  document.getElementById("rp").innerHTML='<div class="done"><div class="done-ic">✅</div><div class="done-h">Сделано. Сдвиг зафиксирован.</div><div class="done-s">Загляни в График — там появилась сегодняшняя точка.</div></div>';
+  const checkNum=history[todayIdx].checks.length;
+  const msgs=['Первая отметка за день. Так держать!','Вторая отметка. График обновлён.','Третья отметка — день зафиксирован полностью. 🎯'];
+  document.getElementById("rp").innerHTML='<div class="done"><div class="done-ic">✅</div><div class="done-h">'+msgs[checkNum-1]+'</div><div class="done-s">Отметка '+checkNum+' из 3 — уровень за день: '+history[todayIdx].level+'</div></div>';
   if(currentWeek===0)buildGraph(0);
 }
 function skip(){document.getElementById("rp").classList.remove("show");chosen=null;document.querySelectorAll(".sc").forEach(c=>c.classList.remove("sel"));document.getElementById("mainBtn").classList.remove("on");}
@@ -764,7 +780,7 @@ function selectFromGuide(state){
 // ── localStorage: save & load history ──
 function saveHistory(){
   try{
-    const data=history.map(e=>e?{d:e.date.toISOString(),s:e.state,l:e.level}:null);
+    const data=history.map(e=>e?{d:e.date.toISOString(),s:e.state,l:e.level,ch:e.checks||[{state:e.state,level:e.level}]}:null);
     localStorage.setItem('vib_hist',JSON.stringify(data));
   }catch(e){}
 }
@@ -774,7 +790,7 @@ function loadHistory(){
     if(!raw)return false;
     const data=JSON.parse(raw);
     if(!Array.isArray(data)||data.length<1)return false;
-    const entries=data.filter(e=>e).map(e=>({date:new Date(e.d),state:e.s,level:e.l}));
+    const entries=data.filter(e=>e).map(e=>({date:new Date(e.d),state:e.s,level:e.l,checks:e.ch||[{state:e.s,level:e.l}]}));
     if(entries.length===0)return false;
     // Rebuild 21-slot array anchored to today
     const base=new Array(21).fill(null);
