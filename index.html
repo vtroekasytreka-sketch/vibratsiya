@@ -609,33 +609,126 @@ function fillResult(){
 }
 function getAction(s){const a=ACTIONS_DB[s].actions,i=now.getDay()%a.length;return{text:a[i],num:i+1,total:a.length};}
 function doAction(){
-  // Save to history
-  history[20]={date:now,state:chosen,level:STATES[chosen].lv};
+  // Save to history — find today's slot by date
+  const todayStr=now.toDateString();
+  let todayIdx=history.findIndex(e=>e&&new Date(e.date).toDateString()===todayStr);
+  if(todayIdx===-1){
+    // shift array left, put today at [20]
+    history.shift();
+    history.push({date:now,state:chosen,level:STATES[chosen].lv});
+  } else {
+    history[todayIdx]={date:now,state:chosen,level:STATES[chosen].lv};
+  }
+  saveHistory();
   document.getElementById("rp").innerHTML='<div class="done"><div class="done-ic">✅</div><div class="done-h">Сделано. Сдвиг зафиксирован.</div><div class="done-s">Загляни в График — там появилась сегодняшняя точка.</div></div>';
   if(currentWeek===0)buildGraph(0);
 }
 function skip(){document.getElementById("rp").classList.remove("show");chosen=null;document.querySelectorAll(".sc").forEach(c=>c.classList.remove("sel"));document.getElementById("mainBtn").classList.remove("on");}
 
-// ── NOTIFICATIONS ──
-let notifOk=false;
-function handleNotify(){
-  if(notifOk){document.getElementById("sched").classList.toggle("show");return;}
-  if(!("Notification"in window)){alert("Браузер не поддерживает уведомления.");return;}
-  Notification.requestPermission().then(p=>{
-    if(p==="granted"){
-      notifOk=true;
-      document.getElementById("nb").classList.add("ok");
-      document.getElementById("nb-ttl").textContent="🟢 Напоминания включены";
-      document.getElementById("nb-sub").textContent="Нажми чтобы настроить время";
-      document.getElementById("nb-btn").textContent="Настроить";
-      document.getElementById("sched").classList.add("show");
-      new Notification("⚡ Вибрация",{body:"Напоминания включены! Как ты сейчас?"});
-    }
-  });
+// ── NOTIFICATIONS (Firebase FCM) ──
+const VAPID_KEY = "BCrdCd3gd0on6bgpAxSLlD0m0TD7_gQZAQCfuJokI5i1v41oTqXBeRh-dgrEepLzJzqwMo5F3YvrgCs4rf0MKVI";
+const firebaseConfig = {
+  apiKey: "AIzaSyCVO0h2ofIwC6LYxRZz4Xpkgtu8dQp7UbQ",
+  authDomain: "vibratsiya-d66b0.firebaseapp.com",
+  projectId: "vibratsiya-d66b0",
+  storageBucket: "vibratsiya-d66b0.firebasestorage.app",
+  messagingSenderId: "192936323967",
+  appId: "1:192936323967:web:c67cc0c8ec1c1512fb484a",
+  measurementId: "G-KEH9QSM7VF"
+};
+
+let notifOk = false;
+let fcmApp = null;
+let fcmMessaging = null;
+
+async function initFirebase() {
+  if (fcmApp) return true;
+  try {
+    const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
+    const { getMessaging, getToken, onMessage } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js');
+    fcmApp = initializeApp(firebaseConfig);
+    fcmMessaging = getMessaging(fcmApp);
+    onMessage(fcmMessaging, (payload) => {
+      new Notification(payload.notification.title, {
+        body: payload.notification.body,
+        icon: '/icon-192.png'
+      });
+    });
+    return { getToken, messaging: fcmMessaging };
+  } catch(e) { console.error('Firebase init error', e); return false; }
 }
-document.querySelectorAll(".chip").forEach(c=>c.addEventListener("click",()=>c.classList.toggle("on")));
-function saveSchedule(){const t=[...document.querySelectorAll(".chip.on")].map(c=>c.dataset.t);document.getElementById("nb-sub").textContent="Напоминания: "+t.join(", ");document.getElementById("sched").classList.remove("show");}
-if("Notification"in window&&Notification.permission==="granted"){notifOk=true;document.getElementById("nb").classList.add("ok");document.getElementById("nb-ttl").textContent="🟢 Напоминания включены";document.getElementById("nb-sub").textContent="Нажми чтобы настроить время";document.getElementById("nb-btn").textContent="Настроить";}
+
+async function handleNotify() {
+  if (notifOk) { document.getElementById("sched").classList.toggle("show"); return; }
+  if (!("Notification" in window)) { alert("Браузер не поддерживает уведомления."); return; }
+
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") { alert("Разреши уведомления в настройках браузера."); return; }
+
+  const fb = await initFirebase();
+  if (!fb) { alert("Ошибка подключения к Firebase."); return; }
+
+  try {
+    const swReg = await navigator.serviceWorker.register('/sw.js');
+    const token = await fb.getToken(fb.messaging, {
+      vapidKey: VAPID_KEY,
+      serviceWorkerRegistration: swReg
+    });
+
+    if (token) {
+      localStorage.setItem('fcm_token', token);
+      notifOk = true;
+      document.getElementById("nb").classList.add("ok");
+      document.getElementById("nb-ttl").textContent = "🟢 Напоминания включены";
+      document.getElementById("nb-sub").textContent = "Нажми чтобы настроить время";
+      document.getElementById("nb-btn").textContent = "Настроить";
+      document.getElementById("sched").classList.add("show");
+
+      // Save chosen times and schedule via service worker
+      const times = getChosenTimes();
+      saveScheduleToSW(swReg, times);
+
+      new Notification("⚡ Вибрация", {body: "Напоминания включены! Как ты сейчас?"});
+    }
+  } catch(e) { console.error('FCM error', e); alert("Не удалось получить токен уведомлений."); }
+}
+
+function getChosenTimes() {
+  return [...document.querySelectorAll(".chip.on")].map(c => c.dataset.t);
+}
+
+function saveScheduleToSW(swReg, times) {
+  localStorage.setItem('notif_times', JSON.stringify(times));
+  if (swReg && swReg.active) {
+    swReg.active.postMessage({ type: 'SCHEDULE', times: times });
+  }
+}
+
+document.querySelectorAll(".chip").forEach(c => c.addEventListener("click", () => c.classList.toggle("on")));
+
+function saveSchedule() {
+  const times = getChosenTimes();
+  document.getElementById("nb-sub").textContent = "Напоминания: " + times.join(", ");
+  document.getElementById("sched").classList.remove("show");
+  navigator.serviceWorker.ready.then(swReg => saveScheduleToSW(swReg, times));
+}
+
+// Restore notification state on load
+(async function() {
+  const token = localStorage.getItem('fcm_token');
+  if (token && "Notification" in window && Notification.permission === "granted") {
+    notifOk = true;
+    document.getElementById("nb").classList.add("ok");
+    document.getElementById("nb-ttl").textContent = "🟢 Напоминания включены";
+    document.getElementById("nb-sub").textContent = "Нажми чтобы настроить время";
+    document.getElementById("nb-btn").textContent = "Настроить";
+    // Re-register SW and restore schedule
+    const swReg = await navigator.serviceWorker.register('/sw.js');
+    const times = JSON.parse(localStorage.getItem('notif_times') || '["08:00","13:00","20:00"]');
+    saveScheduleToSW(swReg, times);
+  }
+})();
+
 
 // ── NAVIGATION ──
 const mainEls=["nb","sched","mainContent","gridLabel","statesGrid","infoHint","ctaWrap","rp"];
@@ -681,19 +774,23 @@ function loadHistory(){
     if(!raw)return false;
     const data=JSON.parse(raw);
     if(!Array.isArray(data)||data.length<1)return false;
-    history=data.map(e=>e?{date:new Date(e.d),state:e.s,level:e.l}:null);
-    // ensure array length 21
-    while(history.length<21)history.unshift(null);
-    history=history.slice(-21);
+    const entries=data.filter(e=>e).map(e=>({date:new Date(e.d),state:e.s,level:e.l}));
+    if(entries.length===0)return false;
+    // Rebuild 21-slot array anchored to today
+    const base=new Array(21).fill(null);
+    const todayTime=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();
+    entries.forEach(e=>{
+      const eTime=new Date(e.date.getFullYear(),e.date.getMonth(),e.date.getDate()).getTime();
+      const diffDays=Math.round((todayTime-eTime)/(86400000));
+      const idx=20-diffDays;
+      if(idx>=0&&idx<=20)base[idx]=e;
+    });
+    history=base;
     return true;
   }catch(e){return false;}
 }
 
-// ── Save when user marks a state ──
-const _origBtnDo=document.getElementById('btnDo').onclick;
-document.getElementById('btnDo').addEventListener('click',function(){
-  setTimeout(saveHistory,100);
-});
+// saveHistory is now called inside doAction()
 
 // Load on start
 (function(){
